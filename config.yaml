@@ -1,0 +1,6 @@
+local_ip: "192.168.1.102"
+ports:
+  - port: 8001
+    bus_number: 1
+  - port: 8002
+    bus_number: 2
