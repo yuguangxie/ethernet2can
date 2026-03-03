@@ -2,40 +2,35 @@
 
 ## 概述
 
-`can_receiver.py` 是一个 Python 脚本，用于从多个 UDP 端口接收封装的 CAN（控制器局域网）报文，解析这些报文，并将它们保存到一个 ASC（ASCII）文件中，格式兼容 Wireshark 或 CANalyzer 等 CAN 分析工具。每个端口的报文使用特定的总线编号（`1` 或 `2`）区分，文件名基于启动时的系统时间自动生成（如 `can_data_2025-09-16_00-19-00.asc`）。脚本通过 YAML 配置文件进行设置，支持线程安全的文件写入。
+这个项目用于监听多个 UDP 端口，接收封装后的 CAN 报文，并将结果写入 ASC 日志文件，便于后续用 CANalyzer、Wireshark 等工具分析。
 
-## 功能
-- 监听多个 UDP 端口（如 `8001` 和 `8002`）以接收 CAN 报文。
-- 将所有报文保存到单一 ASC 文件，使用端口特定的总线编号区分。
-- 每次启动生成新的文件名，基于当前系统时间。
-- 使用线程锁确保并发写入文件时不发生数据冲突。
-- 通过 `config.yaml` 文件配置 IP 和端口。
-- 提供针对配置、套接字和文件操作的健壮错误处理。
-- 每个端口的报文使用各自的首次接收时间作为相对时间戳基准。
-- 支持通过 Ctrl-C 优雅退出，自动清理套接字。
+当前仓库已经整理为一个可直接分发的最小结构：
 
-## 前提条件
-- **Python 3.6+**：确保已安装 Python（检查：`python3 --version`）。
-- **所需库**：
-  - `pyyaml`：用于解析配置文件。
-  - 安装方法：`pip install pyyaml`
-- **操作系统**：已在 Linux/Windows 上测试，理论上支持所有 Python 支持的系统。
-- **网络权限**：确保机器可以绑定到配置的 IP（如 `192.168.1.102`）和端口（如 `8001`、`8002`）。
-- **CAN 数据源**：需要设备或软件通过 UDP 发送 CAN 数据（格式：1 字节头部表示数据长度，字节 2-5 为 CAN ID，之后为数据）。
+- [can_receiver.py](/d:/workspace/0-yunle/4_program/ethernet2can/can_receiver.py): UDP 接收与 ASC 写入
+- [send_test_frames.py](/d:/workspace/0-yunle/4_program/ethernet2can/send_test_frames.py): 本地自测发送脚本
+- [config.yaml](/d:/workspace/0-yunle/4_program/ethernet2can/config.yaml): 示例配置
+- [requirements.txt](/d:/workspace/0-yunle/4_program/ethernet2can/requirements.txt): Python 依赖
+- [.gitignore](/d:/workspace/0-yunle/4_program/ethernet2can/.gitignore): 忽略缓存与运行产物
 
-## 安装
-1. 将本仓库克隆或下载到本地。
-2. 安装所需的 Python 库：
-   ```bash
-   pip install pyyaml
-   ```
-3. 确保 `config.yaml` 文件与 `can_receiver.py` 在同一目录（见下文 [配置](#配置)）。
+## 环境要求
+
+- Python 3.8+
+- `pip`
+
+安装依赖：
+
+```bash
+pip install -r requirements.txt
+```
 
 ## 配置
-脚本通过 `config.yaml` 文件指定网络设置。需在 `can_receiver.py` 所在目录创建或编辑 `config.yaml`。示例配置如下：
+
+默认读取脚本同目录下的 [config.yaml](/d:/workspace/0-yunle/4_program/ethernet2can/config.yaml)。
+
+示例：
 
 ```yaml
-local_ip: "192.168.1.102"
+local_ip: "0.0.0.0"
 ports:
   - port: 8001
     bus_number: 1
@@ -43,97 +38,113 @@ ports:
     bus_number: 2
 ```
 
-### 配置字段说明
-- `local_ip`：绑定监听的 IP 地址（如 `192.168.1.102` 指定接口，`0.0.0.0` 表示所有接口）。
-- `ports`：端口配置列表，每个端口包含：
-  - `port`：监听的 UDP 端口号（如 `8001` 或 `8002`）。
-  - `bus_number`：该端口报文的总线编号（`1` 或 `2`）。
+字段说明：
 
-**注意**：确保端口 `8001` 和 `8002` 未被占用，且 IP 地址可被 CAN 数据源访问。文件名由程序自动生成（如 `can_data_2025-09-16_00-19-00.asc`），无需在配置文件中指定。
+- `local_ip`: 要绑定的本地地址。`0.0.0.0` 表示监听所有网卡。
+- `ports`: 监听项列表。
+- `port`: UDP 端口号，范围 `1-65535`。
+- `bus_number`: ASC 输出中的总线号，要求为正整数。
 
-## 使用方法
-1. **准备环境**：
-   - 将 `config.yaml` 放在与 `can_receiver.py` 相同的目录。
-   - 确保 `csv/` 目录可写（若不存在，脚本会自动创建）。
+## 报文格式
 
-2. **运行脚本**：
-   ```bash
-   python3 can_receiver.py
-   ```
-   - 脚本会：
-     - 加载 `config.yaml`。
-     - 为端口 `8001` 和 `8002` 各启动一个线程监听 UDP 报文。
-     - 生成基于当前时间的文件名（如 `csv/can_data_2025-09-16_00-19-00.asc`），并保存接收的 CAN 报文。
-     - 打印状态信息（绑定成功、每 100 条报文计数）。
-   - 示例输出：
-     ```
-     在 192.168.1.102:8001 上启动接收器，保存到 csv/can_data_2025-09-16_00-19-00.asc，总线编号 1
-     已绑定到 192.168.1.102:8001
-     在 192.168.1.102:8002 上启动接收器，保存到 csv/can_data_2025-09-16_00-19-00.asc，总线编号 2
-     已绑定到 192.168.1.102:8002
-     New log file created: csv/can_data_2025-09-16_00-19-00.asc
-     所有接收器已启动。按 Ctrl-C 停止。
-     端口 8001 收到首条报文，来自 ('192.168.1.100', 12345)
-     端口 8001 开始记录。按 Ctrl-C 停止。
-     端口 8002 收到首条报文，来自 ('192.168.1.100', 12346)
-     端口 8002 开始记录。按 Ctrl-C 停止。
-     端口 8001：已接收 100 条报文。
-     ```
+脚本假定每个 UDP 报文的格式如下：
 
-3. **停止脚本**：
-   - 按 `Ctrl-C` 停止脚本，脚本会关闭所有套接字并干净退出。
+- 第 1 字节：DLC，取低 4 bit，范围 `0-8`
+- 第 2-5 字节：CAN ID，大端序
+- 第 6 字节开始：CAN 数据区
 
-4. **检查输出**：
-   - 输出文件（如 `csv/can_data_2025-09-16_00-19-00.asc`）将包含 ASC 格式的 CAN 报文：
-     ```
-     date Tue Sep 16 00:19:00 2025
-     base hex  timestamps absolute
-     0.000123 1 1A2X Tx d 4 01 23 45 67
-     0.000456 2 1A3X Tx d 8 12 34 56 78 9A BC DE F0
-     ...
-     ```
-   - 字段说明：`<时间戳> <总线编号> <CAN_ID> <方向> <类型> <长度> <数据>`
+示例：
 
-## 测试
-测试脚本的方法：
-1. **发送 UDP 报文**：
-   - 使用 `netcat` 发送测试报文：
-     ```bash
-     echo -n -e "\x04\x00\x00\x01\xA2\x01\x23\x45\x67" | nc -u 192.168.1.102 8001
-     echo -n -e "\x08\x00\x00\x01\xA3\x12\x34\x56\x78\x9A\xBC\xDE\xF0" | nc -u 192.168.1.102 8002
-     ```
-   - 第一个字节（如 `0x04`）表示数据长度，字节 2-5（如 `0x00 0x00 0x01 0xA3`）为 CAN ID，之后为数据。
+```text
+\x04\x00\x00\x01\xA2\x01\x23\x45\x67
+```
 
-2. **验证输出**：
-   - 使用文本编辑器或 CAN 分析工具打开 `csv/can_data_YYYY-MM-DD_HH-MM-SS.asc`。
-   - 确保端口 `8001` 的报文使用总线编号 `1`，端口 `8002` 使用总线编号 `2`，数据长度正确。
+表示：
 
-3. **检查错误处理**：
-   - 测试无效的 `config.yaml`（如缺少字段），验证错误提示。
-   - 发送格式错误的报文（如少于 5 字节），确认报文被跳过并记录错误。
+- DLC = `4`
+- CAN ID = `0x1A2`
+- 数据 = `01 23 45 67`
+
+如果你的设备协议不是这个格式，需要修改 [can_receiver.py](/d:/workspace/0-yunle/4_program/ethernet2can/can_receiver.py) 中的 `parse_can_id` 和 `parse_can_frame`。
+
+## 运行接收端
+
+```bash
+python can_receiver.py
+```
+
+启动后会：
+
+- 校验配置文件
+- 创建 `csv/` 目录
+- 生成形如 `csv/can_data_YYYY-MM-DD_HH-MM-SS.asc` 的输出文件
+- 为每个端口启动一个接收线程
+
+当前使用标准 `logging` 输出日志，示例：
+
+```text
+2026-03-03 10:00:00 INFO [MainThread] new log file created: D:\workspace\0-yunle\4_program\ethernet2can\csv\can_data_2026-03-03_10-00-00.asc
+2026-03-03 10:00:00 INFO [udp-8001] starting receiver on 0.0.0.0:8001, writing to D:\workspace\0-yunle\4_program\ethernet2can\csv\can_data_2026-03-03_10-00-00.asc with bus 1
+2026-03-03 10:00:00 INFO [udp-8001] bound receiver to 0.0.0.0:8001
+2026-03-03 10:00:05 WARNING [udp-8001] port 8001 skipping invalid packet from ('127.0.0.1', 50000): data too short for CAN frame
+```
+
+按 `Ctrl-C` 后，主线程会通知所有接收线程停止，并等待它们退出。
+
+## 运行自测发送端
+
+```bash
+python send_test_frames.py
+```
+
+该脚本会向本机 `127.0.0.1` 的 `8001` 和 `8002` 端口发送 3 帧测试数据，并输出发送日志。
+
+推荐联调顺序：
+
+1. 保持 [config.yaml](/d:/workspace/0-yunle/4_program/ethernet2can/config.yaml#L1) 中的 `local_ip` 为 `0.0.0.0`
+2. 启动 [can_receiver.py](/d:/workspace/0-yunle/4_program/ethernet2can/can_receiver.py)
+3. 运行 [send_test_frames.py](/d:/workspace/0-yunle/4_program/ethernet2can/send_test_frames.py)
+4. 检查 `csv/` 目录中的 ASC 输出是否新增对应报文
+
+## 输出格式
+
+输出为 ASC 文本文件，头部类似：
+
+```text
+date Tue Mar 03 10:00:00 2026
+base hex  timestamps relative
+```
+
+报文行类似：
+
+```text
+0.123456 1 1A2 Tx d 4 01 23 45 67
+0.456789 2 1A3 Tx d 8 12 34 56 78 9A BC DE F0
+```
+
+字段说明：
+
+- 相对时间戳
+- 总线号
+- CAN ID
+- 方向，当前固定写为 `Tx`
+- 帧类型，当前固定写为 `d`
+- 数据长度
+- 数据字节
+
+## 已整理的发布项
+
+- 补充了 [requirements.txt](/d:/workspace/0-yunle/4_program/ethernet2can/requirements.txt)，安装方式更明确。
+- 补充了 [.gitignore](/d:/workspace/0-yunle/4_program/ethernet2can/.gitignore)，避免提交缓存和运行输出。
+- `print` 已替换为标准 `logging`，日志级别和线程来源更清晰。
+- 保持单文件脚本结构，避免在当前体量下引入过重的打包配置。
 
 ## 故障排除
-- **"config.yaml 未找到"**：
-  - 确保 `config.yaml` 存在于 `can_receiver.py` 所在目录。
-  - 检查文件语法是否正确（可用 YAML 在线验证工具）。
-- **"无法绑定到 IP:端口"**：
-  - 检查端口 `8001` 或 `8002` 是否被占用（Linux: `netstat -uln | grep 8001`）。
-  - 确保 IP 与网络接口匹配。
-- **输出文件无数据**：
-  - 确认 CAN 数据源是否向 `192.168.1.102:8001` 和 `192.168.1.102:8002` 发送 UDP 报文。
-  - 检查报文格式（1 字节长度，4 字节 CAN ID，之后为数据）。
-- **文件名重复**：
-  - 由于文件名基于启动时间，秒级精度通常足够。如需更高精度，可修改代码中的时间格式。
-- **高 CPU 使用率**：
-  - 脚本持续轮询套接字。如有问题，可在接收循环中添加小延迟（如 `time.sleep(0.01)`，需谨慎修改）。
 
-## 注意事项
-- **报文格式**：脚本假设 UDP 报文格式为 1 字节长度字段（bit3-bit0），字节 2-5 为 CAN ID（大端序），之后为数据。如格式不同，需修改 `parse_can_id` 和 `save_to_file`。
-- **时间戳**：每个端口使用各自的首次报文时间作为时间戳基准。如需全局时间戳，可修改代码共享单一 `start_time`。
-- **扩展性**：当前支持 `8001` 和 `8002` 两个端口，可通过在 `ports` 列表添加更多端口扩展。
-
-## 贡献
-欢迎提交问题或拉取请求，以修复错误或添加功能（如全局时间戳、支持可变数据长度等）。
+- 无法绑定端口：检查端口是否被占用，或 `local_ip` 是否属于本机网卡。
+- 收不到数据：确认发送端目标地址、端口以及报文格式正确。
+- 日志中频繁出现 `skipping invalid packet`：说明收到的数据不满足当前协议假设。
 
 ## 许可证
-本项目采用 MIT 许可证。
+
+MIT License，见 [LICENSE](/d:/workspace/0-yunle/4_program/ethernet2can/LICENSE)。
