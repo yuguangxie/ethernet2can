@@ -112,7 +112,7 @@ python send_test_frames.py
 
 ```text
 date Tue Mar 03 10:00:00 2026
-base hex  timestamps relative
+base hex  timestamps absolute
 ```
 
 报文行类似：
@@ -144,6 +144,7 @@ base hex  timestamps relative
 - 无法绑定端口：检查端口是否被占用，或 `local_ip` 是否属于本机网卡。
 - 收不到数据：确认发送端目标地址、端口以及报文格式正确。
 - 日志中频繁出现 `skipping invalid packet`：说明收到的数据不满足当前协议假设。
+- `exe` 启动后立即退出：优先检查 `config.yaml` 是否与 `exe` 位于同一目录，以及配置中的 `local_ip` 是否属于本机。
 
 ## 许可证
 

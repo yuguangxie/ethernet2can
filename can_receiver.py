@@ -9,9 +9,6 @@ import sys
 import yaml
 
 
-BASE_DIR = Path(__file__).resolve().parent
-CONFIG_PATH = BASE_DIR / "config.yaml"
-OUTPUT_DIR = BASE_DIR / "csv"
 RECV_BUFFER_SIZE = 1024
 SOCKET_TIMEOUT_SECONDS = 1.0
 PROGRESS_INTERVAL = 1000
@@ -23,6 +20,17 @@ file_lock = threading.Lock()
 
 def configure_logging():
     logging.basicConfig(level=logging.INFO, format=LOG_FORMAT, datefmt="%Y-%m-%d %H:%M:%S")
+
+
+def get_runtime_dir():
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+BASE_DIR = get_runtime_dir()
+CONFIG_PATH = BASE_DIR / "config.yaml"
+OUTPUT_DIR = BASE_DIR / "csv"
 
 
 def parse_can_id(data):
