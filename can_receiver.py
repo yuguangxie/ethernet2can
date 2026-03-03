@@ -66,7 +66,7 @@ def save_to_file(data, file_path, start_time, bus_number):
             if file_path.stat().st_size == 0:
                 current_time = time.strftime("%a %b %d %H:%M:%S %Y", time.localtime(start_time))
                 file.write(f"date {current_time}\n")
-                file.write("base hex  timestamps relative\n")
+                file.write("base hex  timestamps absolute\n")
 
             line = f"{relative_time:0.6f} {bus_number} {can_id_str} Tx d {data_length}"
             if data_str:
