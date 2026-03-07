@@ -8,6 +8,9 @@
 
 - [can_receiver.py](/d:/workspace/0-yunle/4_program/ethernet2can/can_receiver.py): UDP 接收与 ASC 写入
 - [send_test_frames.py](/d:/workspace/0-yunle/4_program/ethernet2can/send_test_frames.py): 本地自测发送脚本
+- [send_can_csv_udp.py](/d:/workspace/0-yunle/4_program/ethernet2can/send_can_csv_udp.py): 按 CSV 发送固定 13 字节 CAN UDP 帧
+- [docs/send_can_csv_udp_usage.md](/d:/workspace/0-yunle/4_program/ethernet2can/docs/send_can_csv_udp_usage.md): 详细使用说明与示例
+- [examples/can_frames_sample.csv](/d:/workspace/0-yunle/4_program/ethernet2can/examples/can_frames_sample.csv): 数据样例
 - [config.yaml](/d:/workspace/0-yunle/4_program/ethernet2can/config.yaml): 示例配置
 - [requirements.txt](/d:/workspace/0-yunle/4_program/ethernet2can/requirements.txt): Python 依赖
 - [.gitignore](/d:/workspace/0-yunle/4_program/ethernet2can/.gitignore): 忽略缓存与运行产物
