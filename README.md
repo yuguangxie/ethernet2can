@@ -8,6 +8,9 @@
 
 - [can_receiver.py](/d:/workspace/0-yunle/4_program/ethernet2can/can_receiver.py): UDP 接收与 ASC 写入
 - [send_test_frames.py](/d:/workspace/0-yunle/4_program/ethernet2can/send_test_frames.py): 本地自测发送脚本
+- [can_sender.py](/d:/workspace/0-yunle/4_program/ethernet2can/can_sender.py): 基于 YAML/CSV 发送固定 13 字节 CAN UDP 帧（支持周期发送）
+- [docs/can_sender_usage.md](/d:/workspace/0-yunle/4_program/ethernet2can/docs/can_sender_usage.md): 详细使用说明与示例
+- [send_config.yaml](/d:/workspace/0-yunle/4_program/ethernet2can/send_config.yaml): CAN 发送端配置（目标IP/端口/周期报文）
 - [config.yaml](/d:/workspace/0-yunle/4_program/ethernet2can/config.yaml): 示例配置
 - [requirements.txt](/d:/workspace/0-yunle/4_program/ethernet2can/requirements.txt): Python 依赖
 - [.gitignore](/d:/workspace/0-yunle/4_program/ethernet2can/.gitignore): 忽略缓存与运行产物
@@ -149,3 +152,59 @@ base hex  timestamps absolute
 ## 许可证
 
 MIT License，见 [LICENSE](/d:/workspace/0-yunle/4_program/ethernet2can/LICENSE)。
+
+
+## 使用 can_sender.py 向设备发报文
+
+### 发送端配置（多端口多IP）
+
+`send_config.yaml` 现在采用 `endpoints` 列表结构，每个端点独立配置 `ip + port`，并可分别设置 `oneshot/cyclic/both` 发送模式。
+
+例如可同时：
+
+- 向 `192.168.1.10:8001` 发送一组报文
+- 向 `192.168.1.11:8001` 发送另一组报文
+
+配置示例：
+
+```yaml
+verbose: false
+endpoints:
+  - name: dev_10_can1
+    ip: "192.168.1.10"
+    port: 8001
+    send_mode: both
+    oneshot_frames:
+      - "201 6 0F 00 32 00 00 00"
+    cyclic_frames:
+      - frame: "203 3 01 02 03"
+        period_ms: 10
+
+  - name: dev_11_can1
+    ip: "192.168.1.11"
+    port: 8001
+    send_mode: cyclic
+    cyclic_frames:
+      - frame: "302 4 01 00 00 01"
+        period_ms: 20
+```
+
+### 运行示例
+
+```bash
+python can_sender.py
+```
+
+指定配置文件：
+
+```bash
+python can_sender.py --config send_config.yaml
+```
+
+仅检查配置与编码（不发送UDP）：
+
+```bash
+python can_sender.py --config send_config.yaml --dry-run
+```
+
+详细说明见 [docs/can_sender_usage.md](/d:/workspace/0-yunle/4_program/ethernet2can/docs/can_sender_usage.md)。

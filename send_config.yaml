@@ -1,0 +1,28 @@
+# CAN 发送配置（支持多端点并发）
+# 每个 endpoint 绑定一个独立 ip:port，且可配置 one-shot / cyclic / both
+
+verbose: false
+
+endpoints:
+  - name: dev_10_can1
+    ip: "192.168.1.10"
+    port: 8001
+    send_mode: both   # oneshot | cyclic | both
+    oneshot_frames:
+      - "201 6 0F 00 32 00 00 00"
+      - "202 2 AA 55"
+    cyclic_frames:
+      - frame: "203 3 01 02 03"
+        period_ms: 10
+      - frame: "204 8 10 11 12 13 14 15 16 17"
+        period_ms: 100
+
+  - name: dev_11_can1
+    ip: "192.168.1.11"
+    port: 8001
+    send_mode: cyclic
+    oneshot_frames:
+      - "301 1 FF"
+    cyclic_frames:
+      - frame: "302 4 01 00 00 01"
+        period_ms: 20
