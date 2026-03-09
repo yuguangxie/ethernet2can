@@ -1,16 +1,14 @@
-"""CAN UDP sender.
+"""Configurable CAN-over-UDP sender.
 
-This script sends CAN frames to an ethernet-to-CAN gateway using the same
-13-byte frame layout that `can_receiver.py` can parse:
-
+The sender encodes each CAN frame into fixed 13-byte payloads:
 - byte0: DLC (low 4 bits)
 - byte1~4: CAN ID (big-endian)
-- byte5~12: data area (up to 8 bytes, padded with 0x00)
+- byte5~12: data (0~8 bytes, right-padded with 0x00)
 
-Features:
-- YAML config driven sending
-- cyclic frames with custom period (ms)
-- optional one-shot CSV/text frame sending
+It supports multiple remote endpoints simultaneously, and each endpoint can send:
+- one-shot frames
+- cyclic frames
+- or both
 """
 
 from __future__ import annotations
@@ -20,8 +18,9 @@ import logging
 import socket
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Tuple
+from typing import Iterable, List
 
 import yaml
 
@@ -30,25 +29,37 @@ LOGGER = logging.getLogger("ethernet2can.can_sender")
 FRAME_SIZE = 13
 MAX_DLC = 8
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent / "send_config.yaml"
+VALID_SEND_MODES = {"oneshot", "cyclic", "both"}
 
 
 class FrameFormatError(ValueError):
-    """Raised when an input CAN frame line/config item is invalid."""
+    """Raised when a frame text has invalid CAN/DLC/payload format."""
+
+
+@dataclass(frozen=True)
+class CyclicFrameTask:
+    """One cyclic frame sending task bound to one endpoint."""
+
+    endpoint_name: str
+    ip: str
+    port: int
+    frame_text: str
+    period_ms: int
 
 
 def configure_logging(verbose: bool) -> None:
-    """Initialize logging with configurable level."""
+    """Initialize logging level and format."""
     level = logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(level=level, format=LOG_FORMAT, datefmt="%Y-%m-%d %H:%M:%S")
 
 
 def split_frame_line(line: str) -> List[str]:
-    """Split one frame line supporting spaces, commas, or mixed separators."""
+    """Split one frame line by spaces/commas (mixed separator friendly)."""
     return [token for token in line.replace(",", " ").split() if token]
 
 
 def parse_can_id(token: str) -> int:
-    """Parse CAN ID token in decimal or 0x-prefixed hexadecimal format."""
+    """Parse CAN ID in decimal or 0x-prefixed hex format."""
     value = int(token, 16) if token.lower().startswith("0x") else int(token)
     if not 0 <= value <= 0x1FFFFFFF:
         raise FrameFormatError(f"CAN ID out of range: {token}")
@@ -56,7 +67,7 @@ def parse_can_id(token: str) -> int:
 
 
 def parse_dlc(token: str) -> int:
-    """Parse DLC and validate it is in [0, 8]."""
+    """Parse DLC and ensure 0 <= DLC <= 8."""
     value = int(token)
     if not 0 <= value <= MAX_DLC:
         raise FrameFormatError(f"DLC out of range (0-8): {token}")
@@ -64,7 +75,7 @@ def parse_dlc(token: str) -> int:
 
 
 def parse_payload(tokens: Iterable[str], dlc: int) -> List[int]:
-    """Parse payload bytes and validate length/value range."""
+    """Parse payload bytes in hex and verify count matches DLC."""
     values = [int(t, 16) for t in tokens]
     if len(values) != dlc:
         raise FrameFormatError(f"payload count({len(values)}) != DLC({dlc})")
@@ -74,7 +85,7 @@ def parse_payload(tokens: Iterable[str], dlc: int) -> List[int]:
     return values
 
 
-def parse_frame_text(frame_text: str) -> Tuple[int, int, List[int]]:
+def parse_frame_text(frame_text: str) -> tuple[int, int, List[int]]:
     """Parse one frame string like '203 3 01 02 03'."""
     tokens = split_frame_line(frame_text)
     if len(tokens) < 2:
@@ -87,7 +98,7 @@ def parse_frame_text(frame_text: str) -> Tuple[int, int, List[int]]:
 
 
 def encode_frame_13_bytes(can_id: int, dlc: int, payload: List[int]) -> bytes:
-    """Encode CAN frame to fixed 13-byte UDP payload."""
+    """Encode one CAN frame into fixed 13-byte payload."""
     frame = bytearray(FRAME_SIZE)
     frame[0] = dlc & 0x0F
     frame[1:5] = can_id.to_bytes(4, byteorder="big", signed=False)
@@ -95,8 +106,44 @@ def encode_frame_13_bytes(can_id: int, dlc: int, payload: List[int]) -> bytes:
     return bytes(frame)
 
 
+def parse_and_encode(frame_text: str) -> bytes:
+    """Parse frame text then encode to 13-byte payload."""
+    can_id, dlc, payload = parse_frame_text(frame_text)
+    return encode_frame_13_bytes(can_id, dlc, payload)
+
+
+def _validate_endpoint_config(index: int, endpoint: dict) -> None:
+    """Validate one endpoint config entry."""
+    if not isinstance(endpoint, dict):
+        raise ValueError(f"endpoints[{index}] must be a map")
+
+    for key in ("name", "ip", "port"):
+        if key not in endpoint:
+            raise ValueError(f"endpoints[{index}] missing required key: {key}")
+
+    if not isinstance(endpoint["name"], str) or not endpoint["name"].strip():
+        raise ValueError(f"endpoints[{index}].name must be non-empty string")
+
+    if not isinstance(endpoint["ip"], str) or not endpoint["ip"].strip():
+        raise ValueError(f"endpoints[{index}].ip must be non-empty string")
+
+    if not isinstance(endpoint["port"], int) or not 1 <= endpoint["port"] <= 65535:
+        raise ValueError(f"endpoints[{index}].port invalid: {endpoint['port']}")
+
+    send_mode = endpoint.get("send_mode", "both")
+    if send_mode not in VALID_SEND_MODES:
+        raise ValueError(
+            f"endpoints[{index}].send_mode must be one of {sorted(VALID_SEND_MODES)}"
+        )
+
+    if "oneshot_frames" in endpoint and not isinstance(endpoint["oneshot_frames"], list):
+        raise ValueError(f"endpoints[{index}].oneshot_frames must be list")
+    if "cyclic_frames" in endpoint and not isinstance(endpoint["cyclic_frames"], list):
+        raise ValueError(f"endpoints[{index}].cyclic_frames must be list")
+
+
 def load_send_config(config_path: Path) -> dict:
-    """Load and validate sender config YAML."""
+    """Load sender YAML and validate schema."""
     try:
         with config_path.open("r", encoding="utf-8") as file:
             config = yaml.safe_load(file) or {}
@@ -105,169 +152,189 @@ def load_send_config(config_path: Path) -> dict:
     except yaml.YAMLError as exc:
         raise ValueError(f"invalid YAML in {config_path}: {exc}") from exc
 
-    required = ("target_ip", "ports", "default_can_channel", "cyclic_frames")
-    for key in required:
-        if key not in config:
-            raise ValueError(f"missing required config key: {key}")
+    if "endpoints" not in config:
+        raise ValueError("config missing required key: endpoints")
+    if not isinstance(config["endpoints"], list) or not config["endpoints"]:
+        raise ValueError("endpoints must be a non-empty list")
 
-    if not isinstance(config["ports"], dict):
-        raise ValueError("ports must be a map, e.g. {1: 4001, 2: 4002}")
+    names = set()
+    for index, endpoint in enumerate(config["endpoints"], start=1):
+        _validate_endpoint_config(index, endpoint)
+        name = endpoint["name"].strip()
+        if name in names:
+            raise ValueError(f"duplicate endpoint name: {name}")
+        names.add(name)
+
+    if "verbose" in config and not isinstance(config["verbose"], bool):
+        raise ValueError("verbose must be bool")
 
     return config
 
 
-def channel_to_port(ports: dict, channel: int) -> int:
-    """Resolve configured UDP port by CAN channel id."""
-    str_key = str(channel)
-    if str_key in ports:
-        port = ports[str_key]
-    elif channel in ports:
-        port = ports[channel]
-    else:
-        raise ValueError(f"channel {channel} not found in ports config")
-
-    if not isinstance(port, int) or not 1 <= port <= 65535:
-        raise ValueError(f"invalid port for channel {channel}: {port}")
-    return port
-
-
-def send_csv_once(sock: socket.socket, csv_path: Path, target_ip: str, target_port: int) -> int:
-    """Send all frames from CSV/text once to one target endpoint."""
+def send_oneshot_frames(
+    sock: socket.socket,
+    endpoint_name: str,
+    ip: str,
+    port: int,
+    frames: List[str],
+    dry_run: bool,
+) -> int:
+    """Send one-shot frame list to one endpoint exactly once."""
     sent = 0
-    with csv_path.open("r", encoding="utf-8") as file:
-        for line_no, raw_line in enumerate(file, start=1):
-            line = raw_line.strip()
-            if not line or line.startswith("#"):
-                continue
+    for line_no, frame_text in enumerate(frames, start=1):
+        frame_text = str(frame_text).strip()
+        if not frame_text:
+            continue
 
-            try:
-                can_id, dlc, payload = parse_frame_text(line)
-            except (ValueError, FrameFormatError) as exc:
-                LOGGER.warning("skip csv line %s: %s | %s", line_no, exc, line)
-                continue
+        try:
+            payload = parse_and_encode(frame_text)
+        except (ValueError, FrameFormatError) as exc:
+            LOGGER.warning("[%s] skip oneshot frame %s: %s | %s", endpoint_name, line_no, exc, frame_text)
+            continue
 
-            frame = encode_frame_13_bytes(can_id, dlc, payload)
-            sock.sendto(frame, (target_ip, target_port))
+        if dry_run:
             LOGGER.info(
-                "csv line=%s -> %s:%s can_id=0x%X dlc=%s data=%s",
-                line_no,
-                target_ip,
-                target_port,
-                can_id,
-                dlc,
-                " ".join(f"{x:02X}" for x in payload) or "(empty)",
+                "[DRY-RUN][%s] oneshot -> %s:%s frame=%s bytes=%s",
+                endpoint_name,
+                ip,
+                port,
+                frame_text,
+                payload.hex(" ").upper(),
             )
-            sent += 1
+        else:
+            sock.sendto(payload, (ip, port))
+            LOGGER.info("[%s] oneshot -> %s:%s frame=%s", endpoint_name, ip, port, frame_text)
+        sent += 1
     return sent
+
+
+def build_cyclic_tasks(config: dict) -> List[CyclicFrameTask]:
+    """Create validated cyclic tasks from endpoint config entries."""
+    tasks: List[CyclicFrameTask] = []
+    for endpoint in config["endpoints"]:
+        endpoint_name = endpoint["name"].strip()
+        send_mode = endpoint.get("send_mode", "both")
+        if send_mode not in ("cyclic", "both"):
+            continue
+
+        for i, item in enumerate(endpoint.get("cyclic_frames", []), start=1):
+            if not isinstance(item, dict):
+                LOGGER.warning("[%s] cyclic_frames[%s] is not map, skipped", endpoint_name, i)
+                continue
+
+            frame_text = str(item.get("frame", "")).strip()
+            period_ms = item.get("period_ms", 10)
+            if not frame_text:
+                LOGGER.warning("[%s] cyclic_frames[%s] empty frame, skipped", endpoint_name, i)
+                continue
+            if not isinstance(period_ms, int) or period_ms <= 0:
+                LOGGER.warning("[%s] cyclic_frames[%s] invalid period_ms=%s", endpoint_name, i, period_ms)
+                continue
+
+            tasks.append(
+                CyclicFrameTask(
+                    endpoint_name=endpoint_name,
+                    ip=endpoint["ip"].strip(),
+                    port=endpoint["port"],
+                    frame_text=frame_text,
+                    period_ms=period_ms,
+                )
+            )
+    return tasks
 
 
 def cyclic_sender_thread(
     sock: socket.socket,
     stop_event: threading.Event,
-    target_ip: str,
-    target_port: int,
-    frame_text: str,
-    period_ms: int,
-    name: str,
+    task: CyclicFrameTask,
+    dry_run: bool,
 ) -> None:
-    """Continuously send one frame with a fixed period until stopped."""
+    """Run one cyclic task until stop signal."""
     try:
-        can_id, dlc, payload = parse_frame_text(frame_text)
+        payload = parse_and_encode(task.frame_text)
     except (ValueError, FrameFormatError) as exc:
-        LOGGER.error("invalid cyclic frame '%s': %s", frame_text, exc)
+        LOGGER.error("[%s] invalid cyclic frame: %s | %s", task.endpoint_name, exc, task.frame_text)
         return
 
-    if period_ms <= 0:
-        LOGGER.error("invalid period_ms=%s for frame '%s'", period_ms, frame_text)
-        return
-
-    frame = encode_frame_13_bytes(can_id, dlc, payload)
-    period_seconds = period_ms / 1000.0
-    next_send = time.monotonic()
+    period_seconds = task.period_ms / 1000.0
+    next_send_time = time.monotonic()
     count = 0
 
     LOGGER.info(
-        "start cyclic sender %s -> %s:%s frame='%s' period=%sms",
-        name,
-        target_ip,
-        target_port,
-        frame_text,
-        period_ms,
+        "[%s] cyclic start -> %s:%s frame=%s period=%sms",
+        task.endpoint_name,
+        task.ip,
+        task.port,
+        task.frame_text,
+        task.period_ms,
     )
 
     while not stop_event.is_set():
-        sock.sendto(frame, (target_ip, target_port))
+        if dry_run:
+            if count == 0:
+                LOGGER.info(
+                    "[DRY-RUN][%s] cyclic sample -> %s:%s bytes=%s",
+                    task.endpoint_name,
+                    task.ip,
+                    task.port,
+                    payload.hex(" ").upper(),
+                )
+        else:
+            sock.sendto(payload, (task.ip, task.port))
+
         count += 1
+        if count % 200 == 0:
+            LOGGER.info("[%s] cyclic sent=%s", task.endpoint_name, count)
 
-        if count % 100 == 0:
-            LOGGER.info("%s sent %s frames", name, count)
-
-        next_send += period_seconds
-        sleep_time = next_send - time.monotonic()
+        next_send_time += period_seconds
+        sleep_time = next_send_time - time.monotonic()
         if sleep_time > 0:
             stop_event.wait(sleep_time)
         else:
-            next_send = time.monotonic()
+            next_send_time = time.monotonic()
 
-    LOGGER.info("stop cyclic sender %s, total=%s", name, count)
+    LOGGER.info("[%s] cyclic stop total=%s", task.endpoint_name, count)
 
 
-def run_sender(config_path: Path, csv_file: Path | None) -> None:
-    """Run sender from YAML config with optional one-shot CSV sending."""
+def run_sender(config_path: Path, dry_run: bool) -> None:
+    """Run one-shot sends and cyclic send workers from config."""
     config = load_send_config(config_path)
     configure_logging(bool(config.get("verbose", False)))
-
-    target_ip = str(config["target_ip"])
-    ports = config["ports"]
-    default_channel = int(config["default_can_channel"])
-    default_port = channel_to_port(ports, default_channel)
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     stop_event = threading.Event()
     threads: List[threading.Thread] = []
 
     try:
-        if csv_file is not None:
-            sent = send_csv_once(sock, csv_file, target_ip, default_port)
-            LOGGER.info("csv one-shot completed, sent=%s", sent)
+        for endpoint in config["endpoints"]:
+            send_mode = endpoint.get("send_mode", "both")
+            if send_mode in ("oneshot", "both"):
+                sent = send_oneshot_frames(
+                    sock=sock,
+                    endpoint_name=endpoint["name"].strip(),
+                    ip=endpoint["ip"].strip(),
+                    port=endpoint["port"],
+                    frames=endpoint.get("oneshot_frames", []),
+                    dry_run=dry_run,
+                )
+                LOGGER.info("[%s] oneshot completed sent=%s", endpoint["name"], sent)
 
-        cyclic_frames = config.get("cyclic_frames", [])
-        for index, item in enumerate(cyclic_frames, start=1):
-            if not isinstance(item, dict):
-                LOGGER.warning("skip cyclic_frames[%s], not a map", index)
-                continue
-
-            frame_text = str(item.get("frame", "")).strip()
-            if not frame_text:
-                LOGGER.warning("skip cyclic_frames[%s], empty frame", index)
-                continue
-
-            channel = int(item.get("can_channel", default_channel))
-            period_ms = int(item.get("period_ms", 10))
-            target_port = channel_to_port(ports, channel)
-
+        cyclic_tasks = build_cyclic_tasks(config)
+        for idx, task in enumerate(cyclic_tasks, start=1):
             thread = threading.Thread(
                 target=cyclic_sender_thread,
-                args=(
-                    sock,
-                    stop_event,
-                    target_ip,
-                    target_port,
-                    frame_text,
-                    period_ms,
-                    f"cyclic-{index}",
-                ),
+                args=(sock, stop_event, task, dry_run),
                 daemon=False,
-                name=f"cyclic-{index}",
+                name=f"cyclic-{idx}",
             )
             thread.start()
             threads.append(thread)
 
         if not threads:
-            LOGGER.info("no cyclic_frames configured, sender exits")
+            LOGGER.info("no cyclic tasks configured, sender exits")
             return
 
-        LOGGER.info("all cyclic senders started, press Ctrl-C to stop")
+        LOGGER.info("cyclic senders started (%s threads), press Ctrl-C to stop", len(threads))
         for thread in threads:
             thread.join()
     except KeyboardInterrupt:
@@ -280,28 +347,27 @@ def run_sender(config_path: Path, csv_file: Path | None) -> None:
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    """Create CLI argument parser."""
-    parser = argparse.ArgumentParser(description="CAN UDP sender with YAML config")
+    """Build command-line argument parser."""
+    parser = argparse.ArgumentParser(description="CAN UDP sender (multi-endpoint, oneshot+cyclic)")
     parser.add_argument(
         "--config",
         type=Path,
         default=DEFAULT_CONFIG_PATH,
-        help="sender config yaml path",
+        help="sender yaml config path",
     )
     parser.add_argument(
-        "--csv-file",
-        type=Path,
-        help="optional CSV/text file for one-shot sending before cyclic send",
+        "--dry-run",
+        action="store_true",
+        help="parse/encode/log only; do not send UDP packets",
     )
     return parser
 
 
 def main() -> None:
-    """CLI entry point."""
+    """Program entry."""
     parser = build_arg_parser()
     args = parser.parse_args()
-    csv_file = args.csv_file.resolve() if args.csv_file else None
-    run_sender(args.config.resolve(), csv_file)
+    run_sender(args.config.resolve(), args.dry_run)
 
 
 if __name__ == "__main__":
