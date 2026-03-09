@@ -1,0 +1,24 @@
+# CAN 发送端配置文件
+# target_ip: 以太网转 CAN 设备 IP
+# ports: CAN 通道与 UDP 端口映射
+# default_can_channel: 默认发送通道（用于 --csv-file 单次发送）
+# verbose: 是否输出调试日志
+# cyclic_frames: 周期发送报文列表
+#   - frame: "CAN_ID DLC DATA..."，例如 "203 3 01 02 03"
+#   - period_ms: 周期，单位毫秒
+#   - can_channel: 发送通道（可选，不填则使用 default_can_channel）
+
+target_ip: "192.168.1.10"
+ports:
+  "1": 4001
+  "2": 4002
+default_can_channel: 1
+verbose: false
+
+cyclic_frames:
+  - frame: "203 3 01 02 03"
+    period_ms: 10
+    can_channel: 1
+  - frame: "418 8 11 22 33 44 55 66 77 88"
+    period_ms: 100
+    can_channel: 2

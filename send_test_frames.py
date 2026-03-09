@@ -1,3 +1,5 @@
+"""Simple UDP test sender for local receiver debugging."""
+
 import logging
 import socket
 import time
@@ -14,18 +16,21 @@ TEST_FRAMES = (
 )
 
 
-def configure_logging():
+def configure_logging() -> None:
+    """Initialize logging output for test sender."""
     logging.basicConfig(level=logging.INFO, format=LOG_FORMAT, datefmt="%Y-%m-%d %H:%M:%S")
 
 
-def describe_frame(frame):
+def describe_frame(frame: bytes):
+    """Decode frame fields for readable log output."""
     dlc = frame[0] & 0x0F
     can_id = int.from_bytes(frame[1:5], byteorder="big")
     payload = " ".join(f"{byte:02X}" for byte in frame[5:])
     return dlc, can_id, payload
 
 
-def main():
+def main() -> None:
+    """Send predefined test frames to local UDP ports."""
     configure_logging()
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 

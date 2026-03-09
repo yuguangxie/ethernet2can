@@ -1,3 +1,5 @@
+"""UDP CAN receiver that writes received frames into ASC log files."""
+
 from pathlib import Path
 import binascii
 import logging
@@ -18,11 +20,13 @@ LOGGER = logging.getLogger("ethernet2can.receiver")
 file_lock = threading.Lock()
 
 
-def configure_logging():
+def configure_logging() -> None:
+    """Initialize logging format and INFO log level."""
     logging.basicConfig(level=logging.INFO, format=LOG_FORMAT, datefmt="%Y-%m-%d %H:%M:%S")
 
 
-def get_runtime_dir():
+def get_runtime_dir() -> Path:
+    """Return executable directory when frozen, otherwise script directory."""
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parent
@@ -33,13 +37,15 @@ CONFIG_PATH = BASE_DIR / "config.yaml"
 OUTPUT_DIR = BASE_DIR / "csv"
 
 
-def parse_can_id(data):
+def parse_can_id(data: bytes) -> int:
+    """Parse 4-byte big-endian CAN ID from bytes[1:5]."""
     if len(data) < 5:
         raise ValueError("data too short to parse CAN ID, expected at least 5 bytes")
     return int.from_bytes(data[1:5], byteorder="big")
 
 
-def parse_can_frame(data):
+def parse_can_frame(data: bytes):
+    """Parse one UDP packet into CAN ID string, DLC and payload text."""
     if len(data) < 5:
         raise ValueError("data too short for CAN frame")
 
@@ -60,7 +66,8 @@ def parse_can_frame(data):
     return can_id_str, data_length, payload
 
 
-def save_to_file(data, file_path, start_time, bus_number):
+def save_to_file(data: bytes, file_path: Path, start_time: float, bus_number: int) -> None:
+    """Append one parsed frame into ASC file with relative timestamp and bus number."""
     if start_time is None:
         raise ValueError("start_time not set")
     if not isinstance(bus_number, int) or bus_number <= 0:
@@ -82,7 +89,15 @@ def save_to_file(data, file_path, start_time, bus_number):
             file.write(f"{line}\n")
 
 
-def receiver_thread(local_ip, port, file_path, bus_number, start_time, stop_event):
+def receiver_thread(
+    local_ip: str,
+    port: int,
+    file_path: Path,
+    bus_number: int,
+    start_time: float,
+    stop_event: threading.Event,
+) -> None:
+    """Listen on one UDP port and persist valid frames until stop_event is set."""
     sock = None
     count = 0
     first_packet_logged = False
@@ -139,6 +154,7 @@ def receiver_thread(local_ip, port, file_path, bus_number, start_time, stop_even
 
 
 def load_config():
+    """Load and validate receiver runtime configuration from config.yaml."""
     try:
         with CONFIG_PATH.open("r", encoding="utf-8") as config_file:
             config = yaml.safe_load(config_file) or {}
@@ -189,7 +205,8 @@ def load_config():
     return local_ip.strip(), validated_ports
 
 
-def main():
+def main() -> None:
+    """Start UDP receivers and wait until all threads exit or Ctrl-C is pressed."""
     configure_logging()
     local_ip, ports_config = load_config()
 
