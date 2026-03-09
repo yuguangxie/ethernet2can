@@ -1,125 +1,132 @@
-# send_can_csv_udp.py 使用说明
+# can_sender.py 使用说明
 
-## 1. 功能说明
+## 1. 功能概览
 
-`send_can_csv_udp.py` 用于读取 CSV/文本中的 CAN 帧定义，将每帧编码为**固定 13 字节数据流**并通过 UDP 发送到以太网转 CAN 设备。
+`can_sender.py` 是一个独立的 CAN UDP 发送程序，支持：
 
-编码格式与 `can_receiver.py` 的解析逻辑兼容：
+1. 从 `send_config.yaml` 读取发送参数（目标 IP、端口映射、默认通道、日志开关等）。
+2. 按配置中的 `cyclic_frames` 周期发送报文（例如 10ms 周期持续发送）。
+3. 可选读取 CSV/文本文件做一次性发送（`--csv-file`）。
 
-- 第 1 字节：`DLC`（低 4 bit）
-- 第 2~5 字节：`CAN ID`（4 字节，大端）
-- 第 6~13 字节：`CAN DATA`（最多 8 字节，不足补 `00`）
+发送报文编码为固定 **13 字节**，且可被仓库内 `can_receiver.py` 直接解析。
 
-> 固定 13 字节 = 1 + 4 + 8。
+## 2. 13 字节编码格式
 
-## 2. 设备与端口映射
+每帧格式如下：
 
-远端设备 IP：`192.168.1.10`
+- 第 1 字节：DLC（低 4 bit）
+- 第 2~5 字节：CAN ID（4 字节，大端）
+- 第 6~13 字节：CAN 数据（最多 8 字节，不足补 `00`）
 
-- CAN1 -> `192.168.1.10:4001`
-- CAN2 -> `192.168.1.10:4002`
+即：`1 + 4 + 8 = 13` 字节。
 
-脚本默认使用 CAN1（4001），可通过参数切换。
+示例帧：
 
-## 3. 输入数据文件格式
+```text
+203 3 01 02 03
+```
 
-每行代表一帧，格式：
+编码后：
+
+```text
+03 00 00 00 CB 01 02 03 00 00 00 00 00
+```
+
+## 3. 配置文件 send_config.yaml
+
+默认配置文件名：`send_config.yaml`（与 `can_sender.py` 同目录）。
+
+示例：
+
+```yaml
+target_ip: "192.168.1.10"
+ports:
+  "1": 4001
+  "2": 4002
+default_can_channel: 1
+verbose: false
+
+cyclic_frames:
+  - frame: "203 3 01 02 03"
+    period_ms: 10
+    can_channel: 1
+  - frame: "418 8 11 22 33 44 55 66 77 88"
+    period_ms: 100
+    can_channel: 2
+```
+
+字段说明：
+
+- `target_ip`：目标以太网转 CAN 设备 IP。
+- `ports`：CAN 通道到 UDP 端口映射。你当前设备是：
+  - CAN1 -> `4001`
+  - CAN2 -> `4002`
+- `default_can_channel`：默认发送通道（用于 `--csv-file` 一次性发送）。
+- `verbose`：是否开启调试日志。
+- `cyclic_frames`：周期发送列表。
+  - `frame`：报文字符串，格式 `CAN_ID DLC DATA...`
+  - `period_ms`：发送周期（毫秒）
+  - `can_channel`：该条报文发送到哪个 CAN 通道（可选）
+
+## 4. 输入报文格式（frame / csv）
+
+每行或每条 `frame` 使用同一格式：
 
 ```text
 CAN_ID DLC BYTE0 BYTE1 ...
 ```
 
-示例：
+例如：
 
 ```text
 201 6 0F 00 32 00 00 00
 ```
 
-解释：
+说明：
 
-- `201`：CAN ID（十进制；也支持 `0x201`）
-- `6`：DLC
-- 后续 6 个字节：十六进制数据
+- CAN_ID 支持十进制（如 `201`）和十六进制（如 `0x201`）。
+- DLC 范围 `0~8`。
+- 数据字节数量必须与 DLC 一致。
+- 数据字节按十六进制解析（`00`~`FF`）。
+- 支持空格、逗号或混合分隔。
 
-注意：
+## 5. 运行示例
 
-1. 数据字节数必须与 DLC 一致。
-2. 每个数据字节范围 `00` 到 `FF`。
-3. 支持空行和 `#` 注释行。
-4. 分隔符可用空格、逗号，或混合。
-
-## 4. 快速开始
-
-### 4.1 安装依赖
-
-本脚本只使用 Python 标准库，无新增依赖。若你也要运行接收端，可先安装：
+### 5.1 按 send_config.yaml 周期发送
 
 ```bash
-pip install -r requirements.txt
+python can_sender.py
 ```
 
-### 4.2 先检查编码（不发包）
+### 5.2 指定配置文件
 
 ```bash
-python send_can_csv_udp.py examples/can_frames_sample.csv --dry-run --can-channel 1
+python can_sender.py --config send_config.yaml
 ```
 
-### 4.3 发到 CAN1（4001）
+### 5.3 先 CSV 一次性发送，再进入周期发送
 
 ```bash
-python send_can_csv_udp.py examples/can_frames_sample.csv --target-ip 192.168.1.10 --can-channel 1
+python can_sender.py --config send_config.yaml --csv-file examples/can_frames_sample.csv
 ```
 
-### 4.4 发到 CAN2（4002）
+### 5.4 停止发送
 
-```bash
-python send_can_csv_udp.py examples/can_frames_sample.csv --target-ip 192.168.1.10 --can-channel 2
-```
+运行中按 `Ctrl-C` 结束周期发送线程。
 
-### 4.5 手动指定端口（覆盖通道映射）
+## 6. CSV 示例
 
-```bash
-python send_can_csv_udp.py examples/can_frames_sample.csv --target-ip 192.168.1.10 --target-port 4002
-```
-
-## 5. 常用参数
-
-- `csv_file`：输入文件路径（必填）
-- `--target-ip`：目标 IP，默认 `192.168.1.10`
-- `--can-channel`：CAN 通道，`1` 或 `2`，默认 `1`
-- `--target-port`：手动端口（优先级高于 `--can-channel`）
-- `--interval`：帧间隔秒，默认 `0.01`
-- `--dry-run`：仅解析与编码，不发送 UDP
-- `--verbose`：输出更详细日志
-
-## 6. 编码示例（13字节）
-
-以：
+`examples/can_frames_sample.csv`：
 
 ```text
+# 每行: CAN_ID DLC DATA...
 201 6 0F 00 32 00 00 00
+418 8 11 22 33 44 55 66 77 88
+0x7FF 2 AB CD
 ```
 
-为例：
+## 7. 常见问题
 
-- CAN ID `201(dec)` = `0xC9`
-- DLC = `6`
-- Data = `0F 00 32 00 00 00`
-
-编码后 13 字节：
-
-```text
-06 00 00 00 C9 0F 00 32 00 00 00 00 00
-```
-
-可被 `can_receiver.py` 正确解析为：
-
-- DLC = 6
-- CAN ID = 0xC9
-- Data = `0F 00 32 00 00 00`
-
-## 7. 故障排查
-
-1. **收不到数据**：确认网络可达、IP/端口正确、防火墙放行 UDP。
-2. **行被跳过**：检查该行 DLC 与数据字节个数是否一致。
-3. **解析结果异常**：先执行 `--dry-run`，检查日志中的 `frame=` 十六进制编码。
+1. **设备收不到报文**：检查 `target_ip`、端口映射、防火墙与网线连接。
+2. **报文未按预期发送**：检查 `frame` 格式和 `period_ms` 是否正确。
+3. **某条配置被跳过**：查看日志，通常是 DLC 与数据字节数不匹配。

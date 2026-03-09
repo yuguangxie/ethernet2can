@@ -8,9 +8,10 @@
 
 - [can_receiver.py](/d:/workspace/0-yunle/4_program/ethernet2can/can_receiver.py): UDP 接收与 ASC 写入
 - [send_test_frames.py](/d:/workspace/0-yunle/4_program/ethernet2can/send_test_frames.py): 本地自测发送脚本
-- [send_can_csv_udp.py](/d:/workspace/0-yunle/4_program/ethernet2can/send_can_csv_udp.py): 按 CSV 发送固定 13 字节 CAN UDP 帧
+- [can_sender.py](/d:/workspace/0-yunle/4_program/ethernet2can/can_sender.py): 基于 YAML/CSV 发送固定 13 字节 CAN UDP 帧（支持周期发送）
 - [docs/send_can_csv_udp_usage.md](/d:/workspace/0-yunle/4_program/ethernet2can/docs/send_can_csv_udp_usage.md): 详细使用说明与示例
 - [examples/can_frames_sample.csv](/d:/workspace/0-yunle/4_program/ethernet2can/examples/can_frames_sample.csv): 数据样例
+- [send_config.yaml](/d:/workspace/0-yunle/4_program/ethernet2can/send_config.yaml): CAN 发送端配置（目标IP/端口/周期报文）
 - [config.yaml](/d:/workspace/0-yunle/4_program/ethernet2can/config.yaml): 示例配置
 - [requirements.txt](/d:/workspace/0-yunle/4_program/ethernet2can/requirements.txt): Python 依赖
 - [.gitignore](/d:/workspace/0-yunle/4_program/ethernet2can/.gitignore): 忽略缓存与运行产物
@@ -152,3 +153,41 @@ base hex  timestamps absolute
 ## 许可证
 
 MIT License，见 [LICENSE](/d:/workspace/0-yunle/4_program/ethernet2can/LICENSE)。
+
+
+## 使用 can_sender.py 向设备发报文
+
+### 发送端配置
+
+新增配置文件 [send_config.yaml](/d:/workspace/0-yunle/4_program/ethernet2can/send_config.yaml)，关键参数如下：
+
+- `target_ip`: 目标设备 IP（默认 `192.168.1.10`）
+- `ports`: 通道到端口映射（`1 -> 4001`, `2 -> 4002`）
+- `default_can_channel`: 默认发送通道
+- `verbose`: 日志开关
+- `cyclic_frames`: 周期发送报文列表，例如 `203 3 01 02 03` 每 10ms 发送
+
+### 运行示例
+
+1. 按 `send_config.yaml` 中配置周期发送：
+
+```bash
+python can_sender.py
+```
+
+2. 先读取 CSV 文件一次性发送，再进入周期发送：
+
+```bash
+python can_sender.py --config send_config.yaml --csv-file examples/can_frames_sample.csv
+```
+
+3. 示例周期报文（10ms）：
+
+```yaml
+cyclic_frames:
+  - frame: "203 3 01 02 03"
+    period_ms: 10
+    can_channel: 1
+```
+
+详细说明见 [docs/send_can_csv_udp_usage.md](/d:/workspace/0-yunle/4_program/ethernet2can/docs/send_can_csv_udp_usage.md)。
